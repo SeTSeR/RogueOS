@@ -34,10 +34,20 @@ compile with the `-fno-stack-protector` option:
 gcc -fno-stack-protector -m32 -c kernel.c -o bin/kc.o
 ```
 
+to build kernel you can also use make:
+```
+make kernel
+```
+
 ####Test on emulator####
 ```
 qemu-system-i386 -kernel kernel
 ```
+or
+```
+make run
+```
+
 
 ####Get to boot####
 GRUB requires your kernel executable to be of the pattern `kernel-<version>`.
