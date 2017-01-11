@@ -4,12 +4,12 @@
 */
 #include "keyboard_map.h"
 #include "text_colors.h"
-
+    
 /* there are 25 lines each of 80 columns; each element takes 2 bytes */
 #define LINES 25
-#define COLUMNS_IN_LINE 80
+#define COLS 80
 #define BYTES_FOR_EACH_ELEMENT 2
-#define SCREENSIZE BYTES_FOR_EACH_ELEMENT * COLUMNS_IN_LINE * LINES
+#define SCREENSIZE BYTES_FOR_EACH_ELEMENT * COLS * LINES
 
 #define KEYBOARD_DATA_PORT 0x60
 #define KEYBOARD_STATUS_PORT 0x64
@@ -17,9 +17,7 @@
 #define INTERRUPT_GATE 0x8e
 #define KERNEL_CODE_SEGMENT_OFFSET 0x08
 
-#define ENTER_KEY_CODE 0x1C
-
-extern unsigned char keyboard_map[128];
+extern keytype keyboard_map[128];
 extern void keyboard_handler(void);
 extern char read_port(unsigned short port);
 extern void write_port(unsigned short port, unsigned char data);
@@ -29,6 +27,9 @@ extern void load_idt(unsigned long *idt_ptr);
 unsigned int current_loc = 0;
 /* video memory begins at address 0xb8000 */
 char *vidptr = (char*)0xb8000;
+/* current key */
+unsigned char current_keycode = 0;
+keytype current_key = 0, current_mod = 0;
 
 struct IDT_entry {
 	unsigned short int offset_lowerbits;
@@ -111,7 +112,7 @@ void kprint(const char *str)
 
 void kprint_newline(void)
 {
-	unsigned int line_size = BYTES_FOR_EACH_ELEMENT * COLUMNS_IN_LINE;
+	unsigned int line_size = BYTES_FOR_EACH_ELEMENT * COLS;
 	current_loc = current_loc + (line_size - current_loc % (line_size));
 }
 
@@ -127,7 +128,6 @@ void clear_screen(void)
 void keyboard_handler_main(void)
 {
 	unsigned char status;
-	char keycode;
 
 	/* write EOI */
 	write_port(0x20, 0x20);
@@ -135,19 +135,85 @@ void keyboard_handler_main(void)
 	status = read_port(KEYBOARD_STATUS_PORT);
 	/* Lowest bit of status will be set if buffer is not empty */
 	if (status & 0x01) {
-		keycode = read_port(KEYBOARD_DATA_PORT);
-		if(keycode < 0)
-			return;
+		current_keycode = read_port(KEYBOARD_DATA_PORT);
+                /* check if this key is a modificator */
+                keytype key = keyboard_map[current_keycode & (~0x80)];
+                if (key & (KEY_SHIFT + KEY_CTRL + KEY_ALT))
+                {
+                    if (current_keycode & 0x80)
+                        current_mod &= (~key);
+                    else
+                        current_mod |= key;
+                    current_keycode = 0;
+                }
+	}
+}
 
-		if(keycode == ENTER_KEY_CODE) {
-			kprint_newline();
-			return;
-		}
+keytype getch()
+{
+    while ((current_keycode == 0) || (current_keycode & 0x80));
+    current_key |= keyboard_map[current_keycode];
+            
+    keytype t = current_key;
+    current_keycode = 0;
+    current_key = 0;
+    return t | current_mod;
+}
 
-		vidptr[current_loc++] = keyboard_map[(unsigned char) keycode];
+void move(int x, int y)
+{
+    if (x < 0 || y < 0 || x >= COLS || y >= LINES)
+        return;
+    if ((y*COLS+x) * BYTES_FOR_EACH_ELEMENT < SCREENSIZE)
+        current_loc = (y*COLS+x) * BYTES_FOR_EACH_ELEMENT;
+    else
+        current_loc = x*BYTES_FOR_EACH_ELEMENT;
+}
+
+void addch(char c)
+{
+	unsigned int line_size = BYTES_FOR_EACH_ELEMENT * COLS;
+	if (c == '\n')
+        {
+            if (current_loc / line_size < LINES-1)
+		current_loc = current_loc - (current_loc % line_size) + line_size;
+            else
+            {
+                current_loc = 0;
+                clear_screen();
+            }
+        }
+	else if (c == '\t')
+		for (int i = 0; i<4; ++i)
+		{
+			vidptr[current_loc++] = ' ';
+			vidptr[current_loc++] = 0x07;
+		}	
+	else if (c == '\b')
+	{
+		vidptr[--current_loc] = 0x07;
+		vidptr[--current_loc] = ' ';
+	}
+	else
+	{
+		vidptr[current_loc++] = c;
 		vidptr[current_loc++] = 0x07;
 	}
 }
+
+void mvaddch(int x, int y, unsigned char c)
+{
+    move(x,y);
+    addch(c);
+}
+
+void addstr(const char* str)
+{
+	int i = 0;
+	while (str[i] !=  '\0')
+		addch(str[i++]);
+}
+
 
 void kmain(void)
 {
@@ -160,5 +226,55 @@ void kmain(void)
 	idt_init();
 	kb_init();
 
-	while(1);
+        int x = 0, y = 0;
+        while (1)
+        {
+            keytype c = getch();
+            addch(c);
+            
+            switch (c)
+            {
+                case KEY_UP:
+                    if (y > 0)
+                        --y;
+                    break;
+                case KEY_RIGHT:
+                    if (x < COLS-1)
+                        ++x;
+                    break;
+                    
+                case KEY_DOWN:
+                    if (y < LINES-1)
+                        ++y;
+                    break;
+                    
+                case KEY_LEFT:
+                    if (x > 0)
+                        --x;
+                    break;
+               
+                case (KEY_LEFT | KEY_SHIFT):
+                    x = 0;
+                    break;
+                    
+                case (KEY_RIGHT | KEY_SHIFT):
+                    x = COLS-1;
+                    break;
+                    
+                case (KEY_UP | KEY_SHIFT):
+                    y = 0;
+                    break;
+                    
+                case (KEY_DOWN | KEY_SHIFT):
+                    y = LINES-1;
+                    break;
+                    
+                case (KEY_ALT | KEY_CTRL | ' '):
+                    x = y = 0;
+                    break;
+            }
+
+            clear_screen();
+            mvaddch(x,y,'x');
+        }
 }
