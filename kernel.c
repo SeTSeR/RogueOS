@@ -29,7 +29,7 @@ unsigned int current_loc = 0;
 char *vidptr = (char*)0xb8000;
 /* current key */
 unsigned char current_keycode = 0;
-keytype current_key = 0, current_mod = 0;
+keytype current_mod = 0;
 
 struct IDT_entry {
 	unsigned short int offset_lowerbits;
@@ -152,12 +152,10 @@ void keyboard_handler_main(void)
 keytype getch()
 {
     while ((current_keycode == 0) || (current_keycode & 0x80));
-    current_key |= keyboard_map[current_keycode];
+    keytype key = keyboard_map[current_keycode] | current_mod;
             
-    keytype t = current_key;
     current_keycode = 0;
-    current_key = 0;
-    return t | current_mod;
+    return key;
 }
 
 void move(int x, int y)
